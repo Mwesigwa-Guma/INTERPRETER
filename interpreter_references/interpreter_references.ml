@@ -1,5 +1,3 @@
-
-
 exception Eval_error;;
 exception Type_error;;
 exception Substitution_error;;
@@ -79,8 +77,8 @@ let rec substitution (e1 : exp) (x : string) (e2 : exp) = begin match e1 with
   |Try (te1, te2) -> Try ((substitution te1 x e2, substitution te2 x e2))
   |RaiseDivByZero (t, e) -> RaiseDivByZero (t, substitution e x e2) 
   |Label n -> Label n 
-  |Malloc e -> Malloc e
-  |Mread e -> Mread e
+  |Malloc e -> Malloc (substitution e x e2)
+  |Mread e -> Mread (substitution e x e2)
   |Assign (a1, a2) -> Assign ((substitution a1 x e2), (substitution a2 x e2))
   |Sequence (s1, s2) -> Sequence ((substitution s1 x e2), (substitution s2 x e2))
   |Unit -> Unit
@@ -90,6 +88,11 @@ let rec nextLable memory = match memory with
   |[] -> 0
   |l::[] -> begin match l with |(key, value) -> key+1 end 
   |lh::lt -> nextLable lt 
+
+(* let rec nLV memory = match memory with 
+  |[] -> 0
+  |l::[] -> 1 
+  |lh::lt -> (nLV lt) + 1  *)
 
 let rec step exp memory = begin match (exp, memory) with 
  |(If (True, e1, e2), mem) -> (e1, mem)
@@ -152,26 +155,26 @@ let rec step exp memory = begin match (exp, memory) with
  |(Num n, mem) -> raise Eval_error
  |(Var var, mem) -> raise Eval_error
  |(Lambda (s, t, e), mem) -> (Lambda (s, t, e), mem)
- |(Apply (Lambda (s, t, e1), e2), mem) -> ((substitution e1 s e2), mem)
+ |(Apply (Lambda (s, t, e1), e2), mem) -> ( (substitution e1 s e2), mem)
  |(Apply (LambdaRec(f, t1, t2, x, e1), e2), mem) -> 
    let sub1 = (substitution e1 x e2) in (step (substitution sub1 f (LambdaRec (f, t1, t2, x, e1))) mem)
  |(Apply (Num n, e2), mem) -> begin match step e2 mem with 
    |(e2', mem') -> (Apply (Num n, e2'), mem') end
  |(Apply (True, e2), mem) -> begin match step e2 mem with 
    |(e2', mem') -> (Apply (True, e2'), mem') end
- |(Apply (False, e2), mem) -> begin match step e2 mem with 
+ |(Apply (False, e2), mem) -> begin match step e2 mem with
    |(e2', mem') -> (Apply (False, e2'), mem') end
- |(Apply (Var var, e2), mem) -> begin match step e2 mem with 
+ |(Apply (Var var, e2), mem) -> begin match step e2 mem with
    |(e2', mem') -> (Apply (Var var, e2'), mem') end
- |(Apply (e1, Num n), mem) -> begin match step e1 mem with 
+ |(Apply (e1, Num n), mem) -> begin match step e1 mem with
    |(e1', mem') -> (Apply (e1', Num n), mem') end
- |(Apply (e1, True), mem) -> begin match step e1 mem with 
+ |(Apply (e1, True), mem) -> begin match step e1 mem with
    |(e1', mem') -> (Apply (e1', True), mem') end
- |(Apply (e1, False), mem) -> begin match step e1 mem with 
+ |(Apply (e1, False), mem) -> begin match step e1 mem with
    |(e1', mem') -> (Apply (e1', False), mem') end
- |(Apply (e1, Var var), mem) -> begin match step e1 mem with 
+ |(Apply (e1, Var var), mem) -> begin match step e1 mem with
    |(e1', mem') -> (Apply (e1', Var var), mem') end
- |(Apply (e1, e2), mem) -> begin match step e1 mem with 
+ |(Apply (e1, e2), mem) -> begin match step e1 mem with
    |(e1', mem') -> (Apply (e1', e2), mem') end
  |(LambdaRec (f, t1, t2, x, e), mem) -> (LambdaRec (f, t1, t2, x, e), mem)
  |(Div (Num n1, Num n2), mem) -> if n2 = 0 then (RaiseDivByZero (TInt, Num n1), mem) else (Num (n1/n2), mem)
@@ -192,14 +195,14 @@ let rec step exp memory = begin match (exp, memory) with
       |nextL -> begin match (nextL, e)::mem with 
         |mem' -> (Label nextL, mem') end end 
    |Var var -> begin match (nextLable mem) with
-      |nextL -> begin match (nextL, e)::mem with 
-        |mem' -> (Label nextL, mem') end end 
+      |nextL -> begin match (nextL, e)::mem with
+        |mem' -> (Label nextL, mem') end end
    |Num n -> begin match (nextLable mem) with
-      |nextL -> begin match (nextL, e)::mem with 
-        |mem' -> (Label nextL, mem') end end 
+      |nextL -> begin match (nextL, e)::mem with
+        |mem' -> (Label nextL, mem') end end
    |LambdaRec (f, t1, t2, x, e1) -> begin match (nextLable mem) with
-      |nextL -> begin match (nextL, e)::mem with 
-        |mem' -> (Label nextL, mem') end end 
+      |nextL -> begin match (nextL, e)::mem with
+        |mem' -> (Label nextL, mem') end end
    |Lambda (s, t, e1) -> begin match (nextLable mem) with
       |nextL -> begin match (nextL, e)::mem with 
         |mem' -> (Label nextL, mem') end end 
@@ -217,27 +220,38 @@ let rec step exp memory = begin match (exp, memory) with
    |_ -> begin match step exp mem with 
      |(exp', mem') -> (Mread exp', mem') end end
  |(Assign (e1, e2), mem) -> begin match e1 with 
-   |Label n -> begin match ((n, e2)::mem) with 
-     |mem' -> (Unit, mem') end 
+   |Label n -> begin match e2 with 
+     |True -> begin match (n, True)::(List.remove_assoc n mem) with 
+       |(mem') -> (Unit, mem') end
+     |False -> begin match (n, False)::(List.remove_assoc n mem) with 
+       |(mem') -> (Unit, mem') end
+     |Num n -> begin match (n, Num n)::(List.remove_assoc n mem) with 
+       |(mem') -> (Unit, mem') end
+     |Var var -> begin match (n, Var var)::(List.remove_assoc n mem) with 
+       |(mem') -> (Unit, mem') end
+     |Label n -> begin match (n, Label n)::(List.remove_assoc n mem) with 
+       |(mem') -> (Unit, mem') end
+     |Lambda (s, t, e) -> begin match (n, Lambda (s, t, e))::(List.remove_assoc n mem) with 
+       |(mem') -> (Unit, mem') end
+     |Unit -> begin match (n, Unit)::List.remove_assoc n mem with 
+       |(mem') -> (Unit, mem') end 
+     |RaiseDivByZero (t, e) -> begin match (n, RaiseDivByZero(t, e))::(List.remove_assoc n mem) with 
+       |(mem') -> (Unit, mem') end 
+     |_-> begin match step e2 mem with 
+       |(e2', mem') -> (Assign (e1, e2'), mem') end end  
    |_-> begin match step e1 mem with 
      |(e1', mem') -> (Assign (e1', e2), mem') end end
  |(Sequence(e1, e2), mem) -> begin match e1 with 
-   |True -> begin match step e2 mem with 
-     |(e2', mem') -> ((Sequence (e1, e2')), mem') end 
-   |False -> begin match step e2 mem with 
-     |(e2', mem') -> ((Sequence (e1, e2')), mem') end 
-   |Var var -> begin match step e2 mem with 
-     |(e2', mem') -> ((Sequence (e1, e2')), mem') end 
-   |Label n -> begin match step e2 mem with 
-     |(e2', mem') -> ((Sequence (e1, e2')), mem') end 
-   |Num n -> begin match step e2 mem with 
-     |(e2', mem') -> ((Sequence (e1, e2')), mem') end 
-   |Lambda (s, t, e) -> begin match step e2 mem with 
-     |(e2', mem') -> ((Sequence (e1, e2')), mem') end 
-   |Unit -> begin match step e2 mem with 
-     |(e2', mem') -> ((Sequence (e1, e2')), mem') end 
+   |True -> step e2 mem 
+   |False -> step e2 mem
+   |Var var -> step e2 mem
+   |Label n -> step e2 mem
+   |Num n -> step e2 mem 
+   |Lambda (s, t, e) -> step e2 mem
+   |Unit -> step e2 mem
+   |RaiseDivByZero (t, e) -> step e2 mem
    |_-> begin match step e1 mem with 
-     |(e1', mem') -> (Sequence (e1', e2), mem') end end 
+     |(e1', mem') -> (Sequence (e1', e2), mem') end end
  |(Unit, mem) -> raise Eval_error
  end ;;
 
@@ -254,15 +268,15 @@ let rec multi_step exp memory = begin match (exp, memory) with
   |(IsZero e, mem) -> begin match multi_step e mem with 
     |(Num n, mem') -> if n = 0 then (True, mem') else (False, mem')
     |(RaiseDivByZero (t, e'), mem) -> (RaiseDivByZero (t, e'), mem)
-    |_ -> raise Eval_error end 
+    |_ -> raise Eval_error end
   |(Plus (RaiseDivByZero(t, e1), e2), mem) -> (RaiseDivByZero(t, e1), mem)
   |(Plus (e1, RaiseDivByZero(t, e2)), mem) -> (RaiseDivByZero(t, e2), mem)
   |(Plus (Num n1, Num n2), mem) -> (Num (n1 + n2), mem)
-  |(Plus (Num n, e), mem) -> begin match step e mem with 
-    |(e', mem') -> multi_step (Plus (Num n, e'))  mem' end 
-  |(Plus (e, Num n), mem) -> begin match step e mem with 
-    |(e', mem') -> multi_step (Plus ( e', Num n))  mem' end 
-  |(Plus (e1, e2), mem) -> begin match step e1 mem with 
+  |(Plus (Num n, e), mem) -> begin match step e mem with
+    |(e', mem') -> multi_step (Plus (Num n, e'))  mem' end
+  |(Plus (e, Num n), mem) -> begin match step e mem with
+    |(e', mem') -> multi_step (Plus ( e', Num n))  mem' end
+  |(Plus (e1, e2), mem) -> begin match step e1 mem with
     |(e1', mem') -> multi_step (Plus (e1', e2))  mem' end
   |(Mult (Num n1, Num n2), mem) -> (Num (n1 * n2), mem)
   |(Mult (RaiseDivByZero(t, e1), e2), mem) -> (RaiseDivByZero(t, e1), mem)
@@ -275,31 +289,32 @@ let rec multi_step exp memory = begin match (exp, memory) with
     |(e1', mem') -> multi_step (Mult (e1', e2))  mem' end
   |(Lambda (s, t, e), mem) -> (Lambda (s, t, e), mem)
   |(Apply (e1, e2), mem) -> begin match (multi_step e1 mem) with 
-    |(Lambda (s, t, e), mem') -> multi_step (substitution e s e2) mem'
+    |(Lambda (s, t, e), mem') -> begin match multi_step e2 mem' with 
+      |(e2', mem'') -> multi_step (substitution e s e2') mem'' end 
     |(LambdaRec (f, t1, t2, x, e), mem) -> 
       let sub1 = (substitution e x e2) in (multi_step (substitution sub1 f (LambdaRec (f, t1, t2, x, e))) mem)
     |_-> raise Eval_error end
   |(LambdaRec (f, t1, t2, x, e), mem) -> (LambdaRec (f, t1, t2, x, e), mem)
   |(Div (Num n1, Num n2), mem) -> if n2 = 0 then (RaiseDivByZero (TInt, Num n1), mem) else (Num (n1/n2), mem)
-  |(Div (e, Num n), mem) -> begin match step e mem with 
+  |(Div (e, Num n), mem) -> begin match step e mem with
     |(e', mem') -> multi_step (Div (e', Num n))  mem' end
   |(Div (Num n, e), mem) -> begin match step e mem with 
     |(e', mem') -> multi_step (Div (Num n, e'))  mem' end
-  |(Div (e1, e2 ), mem) ->  begin match step e1 mem with 
+  |(Div (e1, e2 ), mem) ->  begin match step e1 mem with
     |(e1', mem') -> multi_step (Div (e1', e2))  mem' end
-  |(Try (e1, e2), mem) -> begin match multi_step e1 mem with 
+  |(Try (e1, e2), mem) -> begin match multi_step e1 mem with
     |(RaiseDivByZero(t, e), mem') -> multi_step (Apply (e2, e)) mem'
-    |(e1', mem') -> multi_step (Apply(e2, e1')) mem' end 
-  |(RaiseDivByZero (t, e), mem) -> begin match multi_step e mem with 
+    |(e1', mem') -> multi_step (Apply(e2, e1')) mem' end
+  |(RaiseDivByZero (t, e), mem) -> begin match multi_step e mem with
     |(e', mem') -> (RaiseDivByZero (t, e'), mem') end
   |(Label n, mem) -> (Label n, mem)
-  |(Malloc e, mem) -> begin match e with 
+  |(Malloc e, mem) -> begin match e with
     |True -> step (Malloc e) mem
     |False -> step (Malloc e) mem
     |Var va -> step (Malloc e) mem
     |Num n -> step (Malloc e) mem
     |Label n -> step (Malloc e) mem
-    |Lambda (s, t, e) -> step (Malloc e) mem
+    |Lambda (s, t, e') -> step (Malloc e) mem
     |LambdaRec(f, t1, t2, x, e) -> step (Malloc e) mem
     |_-> begin match (step e mem) with 
       |(e', mem') -> multi_step (Malloc e') mem' end end
@@ -308,35 +323,46 @@ let rec multi_step exp memory = begin match (exp, memory) with
     |_ -> begin match step exp mem with 
       |(exp', mem') -> multi_step (Mread exp') mem' end end
   |(Assign (e1, e2), mem) -> begin match e1 with 
-    |Label n -> begin match ((n, e2)::mem) with 
-      |memory -> (Unit, mem) end 
-    |_-> begin match step e1 mem with 
-      |(e1', mem') -> multi_step (Assign (e1', e2)) mem' end end 
+    |Label n -> begin match multi_step e2 mem with 
+      |(e2', mem') -> begin match ((n, e2')::(List.remove_assoc n mem')) with 
+        |mem'' -> (Unit, mem'') end end
+    |_-> begin match step e1 mem with
+      |(e1', mem') -> multi_step (Assign (e1', e2)) mem' end end
   |(Sequence(e1, e2), mem) -> begin match e1 with 
-   |True -> begin match (step e2 mem) with
-    |(e2', mem') -> multi_step ((Sequence (e1, e2'))) mem' end 
-   |False -> begin match (step e2 mem) with
-    |(e2', mem') -> multi_step (Sequence (e1, e2')) mem' end 
-   |Var var -> begin match (step e2 mem) with
-    |(e2', mem') -> multi_step (Sequence (e1, e2')) mem' end
-   |Label n -> begin match (step e2 mem) with
-    |(e2', mem') -> multi_step (Sequence (e1, e2')) mem' end
-   |Num n -> begin match (step e2 mem) with
-    |(e2', mem') -> multi_step (Sequence (e1, e2')) mem' end
-   |Lambda (s, t, e) -> begin match (step e2 mem) with
-    |(e2', mem') -> multi_step (Sequence (e1, e2')) mem' end
-   |Unit -> begin match (step e2 mem) with
-    |(e2', mem') -> multi_step (Sequence (e1, e2')) mem' end
+   |True -> multi_step e2 mem
+   |False -> multi_step e2 mem
+   |Var var -> multi_step e2 mem
+   |Label n -> multi_step e2 mem
+   |Num n -> multi_step e2 mem
+   |Lambda (s, t, e) -> multi_step e2 mem
+   |Unit -> multi_step e2 mem
    |_ -> begin match (step e1 mem) with
     |(e1', mem') -> multi_step (Sequence (e1', e2)) mem' end end
   |(Unit, mem) -> (Unit, mem)
   end ;;
 
+(* print_endline (string_of_int (nLV [(0, (Num 64)); (0, (Num 32)); (0, (Num 16)); (0, (Num 8))])); *)
+
 print_endline (string_of_exp
 ( multi_step
     (Apply
-       ( Lambda ("n", TRef TInt, Mread (Var "n"))
-       , Malloc (Plus (Num 5, Num 1)) ))
+       ( Lambda
+           ( "n"
+           , TRef TInt
+           , Apply
+               ( Lambda
+                   ( "f"
+                   , TArrow (TUnit, TUnit)
+                   , Sequence
+                       ( Apply (Var "f", Unit)
+                       , Sequence (Apply (Var "f", Unit), Mread (Var "n"))
+                       ) )
+               , Lambda
+                   ( "_"
+                   , TUnit
+                   , Assign (Var "n", Div (Mread (Var "n"), Num 2)) ) )
+           )
+       , Malloc (Num 32) ))
     []
 |> fst )
 );
